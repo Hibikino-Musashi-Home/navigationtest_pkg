@@ -1,0 +1,12 @@
+<!-- -*- mode: XML -*- -->
+
+<launch>
+    <include file="$(find common_pkg)/launch/tf.launch" />
+ <include file="$(find common_pkg)/launch/common.launch" />
+    <include file="$(find common_pkg)/launch/slam.launch" />
+
+ <node pkg="common_pkg" type="generate_map_base_link_tf.py" name="generate_map_base_link_tf" output="screen" />
+
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find restaurant_pkg)/rviz_cfg/restaurant.rviz" />
+</launch>
+

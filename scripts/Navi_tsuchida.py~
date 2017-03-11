@@ -1,0 +1,149 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+
+
+import rospy
+
+import actionlib
+
+from dev_smach_pkg.msg import SpeechRecAction
+from dev_smach_pkg.msg import SpeechRecFeedback
+from dev_smach_pkg.msg import SpeechRecResult
+
+import os
+import sys
+
+from subprocess import *
+
+#-----------speech recognition------------------------
+from __future__ import print_function
+import socket
+from contextlib import closing
+import commands
+
+import re
+import csv
+import numpy as np
+#-----------speech recognition------------------------
+
+
+
+#音声合成を現スレッドで起動(喋り終わるまで待つ)
+#半角文字は英語、全角文字は日本語で喋ります
+#例: speech_single('This is English test message.これは日本語のテストメッセージです。')
+def speech_single(speech_str):
+    if rospy.get_param('/param/dbg/speech/ssynlog') == 1:
+        rospy.loginfo(speech_str)
+    if rospy.get_param('/param/dbg/sm/flow') == 0:
+        call(['rosrun', 'common_pkg', 'speech_syn.py', speech_str])
+
+
+#音声合成を他スレッドで起動
+#半角文字は英語、全角文字は日本語で喋ります
+#例: SpeechMuiti('This is English test message.これは日本語のテストメッセージです。')
+def speech_multi(speech_str):
+    if rospy.get_param('/param/dbg/speech/ssynlog') == 1:
+        rospy.loginfo(speech_str)
+    if rospy.get_param('/param/dbg/sm/flow') == 0:
+        Popen(['rosrun', 'common_pkg', 'speech_syn.py', speech_str])
+                
+
+class SpeechRec(object):
+    '''変更前
+    def __init__(self):
+        self._speech_rec_action_server = actionlib.SimpleActionServer('speech_rec_action', SpeechRecAction, execute_cb = self.speech_rec)
+        self._speech_rec_action_server.start()
+    '''
+        
+    def __init__(self, julius_bufsize, julius_sock, RecgDicts):
+        self._speech_rec_action_server = actionlib.SimpleActionServer('speech_rec_action', SpeechRecAction, execute_cb = self.speech_rec)
+        self._speech_rec_action_server.start()
+        self.julius_bufsize = julius_bufsize
+        self.julius_sock = julius_sock
+        self.RecgDicts = RecgDicts
+
+    def speech_rec(self, goal):
+        if goal.speech_rec_goal == 'SRec_InstructOperator':
+            if rospy.get_param('/param/dbg/sm/flow') == 0:
+                #オペレータに追跡停止方法を教える
+                #[もう一度お願いします、わかりました]
+                text = voice2text(self.julius_bufsize, self.julius_sock)
+                flag = returnFlag('PRIDE', text)
+                #もう一度お願いします　：flag = 'again'
+                #わかりました　　　　　：flag = 'ok'
+                #それ以外　　　　　　　：flag = 0
+                pass
+
+            result = SpeechRecResult(speech_rec_result = True)
+            self._speech_rec_action_server.set_succeeded(result)
+        elif goal.speech_rec_goal == 'Img_FollowOperator':
+            if rospy.get_param('/param/dbg/sm/flow') == 0:
+                #追跡停止の呼びかけを認識する
+                #[ここで止まってください]                
+                text = self.voice2text(self.bufsize, self.sock)
+                flag = self.returnFlag('MOVING', text)
+                #ここで止まってください：flag = 'stop'
+                #それ以外　　　　　　　：flag = 0
+                pass
+
+            result = SpeechRecResult(speech_rec_result = True)
+            self._speech_rec_action_server.set_succeeded(result)     
+        else:
+            rospy.logwarn('音声認識ノードエラー。ステートに対する処理が記述されていません。')
+            result = SpeechRecResult(speech_rec_result = False)
+            self._speech_rec_action_server.set_succeeded(result)
+    
+    
+    #Juliusから返ってきた出力（sock,bufsize,XML形式）から、文章部分の抽出を行う（tsuchida）
+    def voice2text(self):
+        sentence = ''
+        while True:
+            recv_data = self.sock.recv(self.bufsize)  # 文字列
+            #print(recv_data)
+            match = re.findall(r'<WHYPO WORD=".*?"', recv_data)
+            sentence_start = re.findall(r'<SHYPO', recv_data)
+            sentence_end = re.findall(r'</SHYPO>', recv_data)
+            if sentence_start:
+                sentence = ''
+            if sentence_end:
+                #print(sentence.strip())
+                return sentence.strip()
+            for m in match:
+                s = m[13:-1]
+                sentence += s
+    
+    #認識した文章に対応するフラグを返す
+    def returnFlag(self, state, text):
+        RecgDict = self.RecgDicts[state]
+        if text in RecgDict:
+            return RecgDict[text]
+        else:
+            return 0
+    
+
+if __name__ == '__main__':
+    node_name = os.path.basename(__file__)
+    node_name = node_name.split('.')
+    rospy.init_node(node_name[0])
+
+    #初期設定
+    #-----------speech recognition------------------------
+    julius_host = 'localhost'
+    julius_port = 10500
+    julius_bufsize = 4096
+    julius_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    julius_sock.connect((julius_host,julius_port))
+    RecgDicts = {
+        'PRIDE': {'わかりました': 'ok', 'もう一度お願いします': 'again'},  # 教示
+        'MOVING': {'ここで止まってください': 'stop'},  # 移動中
+    }
+    #-----------speech recognition------------------------
+    
+    #変更
+    speech_rec = SpeechRec(julius_bufsize, julius_sock, RecgDicts)
+    #変更前
+    #speech_rec = SpeechRec()
+
+    r = rospy.Rate(30)
+    while not rospy.is_shutdown():
+        r.sleep()
